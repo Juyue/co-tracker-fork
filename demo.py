@@ -72,6 +72,13 @@ if __name__ == "__main__":
         model = torch.hub.load("facebookresearch/co-tracker", "cotracker2")
     model = model.to(DEFAULT_DEVICE)
     video = video.to(DEFAULT_DEVICE)
+
+    import debugpy
+
+    port = 5700
+    debugpy.listen(address=("localhost", port))
+    print(f"Now is a good time to attach your debugger: Run: Python: Attach {port}")
+    debugpy.wait_for_client()
     # video = video[:, :20]
     pred_tracks, pred_visibility = model(
         video,

@@ -111,13 +111,12 @@ class CoTracker2(nn.Module):
         track_mask_vis = (
             torch.cat([track_mask, vis], dim=-1).permute(0, 2, 1, 3).reshape(B * N, S, 2)
         )
-
         corr_block = CorrBlock(
             fmaps,
             num_levels=4,
             radius=3,
             padding_mode="border",
-        )
+        ) # NOTE: fmaps are fixed across iterations; Image feature pyramid. However, is target features updated?
 
         sampled_pos_emb = (
             sample_features4d(self.pos_emb.repeat(B, 1, 1, 1), coords[:, 0])
@@ -134,7 +133,7 @@ class CoTracker2(nn.Module):
             fcorrs = corr_block.sample(coords)  # (B N) S LRR
 
             # Get the flow embeddings
-            flows = (coords - coords[:, 0:1]).permute(0, 2, 1, 3).reshape(B * N, S, 2)
+            flows = (coords - coords[:, 0:1]).permute(0, 2, 1, 3).reshape(B * N, S, 2) # coords diff to FIRST frame within the window
             flow_emb = get_2d_embedding(flows, 64, cat_coords=True)  # N S E
 
             track_feat_ = track_feat.permute(0, 2, 1, 3).reshape(B * N, S, self.latent_dim)
@@ -153,8 +152,8 @@ class CoTracker2(nn.Module):
             coord_preds.append(coords * self.stride)
 
             delta_feats_ = delta[..., 2:].reshape(B * N * S, self.latent_dim)
-            track_feat_ = track_feat.permute(0, 2, 1, 3).reshape(B * N * S, self.latent_dim)
-            track_feat_ = self.track_feat_updater(self.norm(delta_feats_)) + track_feat_
+            track_feat_ = track_feat.permute(0, 2, 1, 3).reshape(B * N * S, self.latent_dim) # (B N S) C
+            track_feat_ = self.track_feat_updater(self.norm(delta_feats_)) + track_feat_ # redidual: x = mpl(x) + x 
             track_feat = track_feat_.reshape(B, N, S, self.latent_dim).permute(
                 0, 2, 1, 3
             )  # (B N S) C -> B S N C
@@ -184,7 +183,7 @@ class CoTracker2(nn.Module):
         """Predict tracks
 
         Args:
-            video (FloatTensor[B, T, 3]): input videos.
+            video (FloatTensor[B, T, C, H, W]): input videos.
             queries (FloatTensor[B, N, 3]): point queries.
             iters (int, optional): number of updates. Defaults to 4.
             is_train (bool, optional): enables training mode. Defaults to False.
@@ -213,7 +212,7 @@ class CoTracker2(nn.Module):
         # D = dimension of the transformer input tokens
 
         # video = B T C H W
-        # queries = B N 3
+        # queries = B N 3; (t, x, y)
         # coords_init = B S N 2
         # vis_init = B S N 1
 
@@ -258,11 +257,13 @@ class CoTracker2(nn.Module):
         )
 
         # Compute convolutional features for the video or for the current chunk in case of online mode
+        # fmaps: B, S, C, H, W -> B, S, latent_dim, H // stride, W // stride
         fmaps = self.fnet(video.reshape(-1, C, H, W)).reshape(
             B, -1, self.latent_dim, H // self.stride, W // self.stride
         )
 
         # We compute track features
+        # track_feat: B, S, N, latent_dim
         track_feat = self.get_track_feat(
             fmaps,
             queried_frames - self.online_ind if is_online else queried_frames,
@@ -430,7 +431,7 @@ class EfficientUpdateFormer(nn.Module):
         self.apply(_basic_init)
 
     def forward(self, input_tensor, mask=None):
-        tokens = self.input_transform(input_tensor)
+        tokens = self.input_transform(input_tensor) # B, N, T, C_in -> B, N, T, C_out
         B, _, T, _ = tokens.shape
         virtual_tokens = self.virual_tracks.repeat(B, 1, T, 1)
         tokens = torch.cat([tokens, virtual_tokens], dim=1)
